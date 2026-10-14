@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Camp">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Camp de pêche</title>
+<!--
+  Tableau de bord du camp de pêche — lit le canal ThingSpeak rempli par le moniteur
+  des batteries (ESP32). Aucune ressource externe sauf l'API ThingSpeak.
+  Adresse : index.html#c=<n° de canal>&k=<clé de LECTURE>   (ou #demo pour la démo)
+  Champs : 1 SOC %, 2 tension V, 3 courant A, 4 T batterie, 5 T compartiment,
+           6 T extérieur, 7 solaire W, 8 onduleur (0/1)
+-->
+<style>
+:root{--bg:#e8eff1;--panel:#f7fafb;--ink:#13293d;--mute:#5b7183;--rule:#cfdbe0;--ok:#2f8a4c;--amber:#c77a12;--bad:#b3261e;--blue:#0e7c86;--bat:#b4532a;--box:#a8329e;--ext:#0e7c86;--inv:#d6ece9}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1820;--panel:#13222c;--ink:#e3eef2;--mute:#8aa1b0;--rule:#22384a;--ok:#6fcf8a;--amber:#e9a640;--bad:#f07a72;--blue:#4cc3c9;--bat:#e58a5a;--box:#e06cf0;--ext:#4cc3c9;--inv:#163f43}}
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+main{max-width:560px;margin:auto;padding:max(16px,env(safe-area-inset-top)) 16px 40px}
+header{display:flex;align-items:center;gap:10px}
+h1{font-size:17px;margin:0;flex:1}
+#dot{width:10px;height:10px;border-radius:50%;background:var(--mute)}
+#refresh{font:inherit;font-size:14px;font-weight:600;border:1.5px solid var(--rule);background:var(--panel);color:var(--ink);border-radius:8px;padding:5px 10px;cursor:pointer}
+.hero{padding:14px 0 6px}
+.hero .t{font-size:88px;font-weight:700;line-height:.95;letter-spacing:-3px;font-variant-numeric:tabular-nums}
+.hero .t small{font-size:30px;letter-spacing:0;margin-left:4px;color:var(--mute);font-weight:600}
+.hero p{margin:6px 0 0;color:var(--mute)}
+.bar{position:relative;height:14px;margin:14px 0 2px;border-radius:7px;background:var(--panel);border:1px solid var(--rule);overflow:hidden}
+.bar .fill{position:absolute;left:0;top:0;bottom:0;transition:width .6s}
+.bar .mk{position:absolute;top:0;bottom:0;width:2px;background:var(--bad)}
+.row{display:flex;gap:10px;margin-top:12px}
+.cell{flex:1;min-width:0;background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:10px}
+.cell b{display:block;font-size:clamp(17px,5.4vw,24px);font-variant-numeric:tabular-nums;white-space:nowrap}
+.cell span{font-size:13px;color:var(--mute)}
+.al{margin-top:12px;padding:10px 12px;border-radius:10px;border-left:4px solid var(--amber);background:var(--panel);font-size:14px}
+.al.bad{border-color:var(--bad);color:var(--bad);font-weight:600}
+.al.ok{border-color:var(--ok)}
+h2{font-size:15px;margin:28px 0 8px;display:flex;align-items:center;justify-content:space-between}
+.seg{display:flex;gap:6px}
+.seg button{font:inherit;font-size:14px;font-weight:600;border:1.5px solid var(--rule);background:var(--panel);color:var(--ink);border-radius:8px;padding:5px 10px;cursor:pointer}
+.seg button.sel{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.chart{position:relative}
+canvas{width:100%;height:180px;display:block;background:var(--panel);border:1px solid var(--rule);border-radius:10px;margin-top:8px;touch-action:pan-y}
+.tip{position:absolute;top:14px;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12px;padding:5px 8px;border-radius:6px;white-space:nowrap;display:none}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--mute);margin-top:6px}
+.legend i{display:inline-block;width:12px;height:4px;border-radius:2px;margin-right:5px;vertical-align:middle}
+table{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+th,td{white-space:nowrap;padding:7px 4px;border-bottom:1px solid var(--rule);text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{font-size:12px;color:var(--mute);font-weight:600}
+.cold{color:var(--bad);font-weight:700}
+form{display:grid;gap:10px;margin-top:16px}
+label{font-size:13px;color:var(--mute)}
+input{width:100%;font:inherit;font-size:17px;padding:8px 10px;margin-top:3px;border-radius:8px;border:1px solid var(--rule);background:var(--panel);color:var(--ink)}
+form button{font:inherit;font-weight:600;border-radius:9px;border:1.5px solid var(--ink);background:var(--ink);color:var(--bg);padding:10px 14px;cursor:pointer}
+.link{background:none;border:0;color:var(--blue);font:inherit;font-size:14px;padding:0;cursor:pointer;text-decoration:underline}
+.hint{font-size:13px;color:var(--mute)}
+.hide{display:none!important}
+footer{margin-top:28px;font-size:13px;color:var(--mute)}
+</style></head><body><main>
+
+<header><span id="dot"></span><h1>Camp de pêche</h1><button id="refresh">Actualiser</button></header>
+
+<section id="setup" class="hide">
+  <p>Entre les informations de ton canal ThingSpeak (onglet <b>API Keys</b> du canal).</p>
+  <form id="fSetup">
+    <label>N° du canal (Channel ID)<input id="inC" inputmode="numeric" required></label>
+    <label>Clé de LECTURE (Read API Key, vide si le canal est public)<input id="inK" autocapitalize="off"></label>
+    <button type="submit">Afficher</button>
+  </form>
+  <p class="hint">L'adresse de la page contiendra ces informations : ajoute-la ensuite à l'écran d'accueil (Safari → Partager → Sur l'écran d'accueil).</p>
+  <p><button class="link" id="demoBtn">Voir avec des données de démonstration</button></p>
+</section>
+
+<section id="dash" class="hide">
+  <div class="hero">
+    <div class="t"><span id="soc">--</span><small>%</small></div>
+    <p id="sub">Chargement…</p>
+    <div class="bar"><div class="fill" id="fill"></div><div class="mk" id="mk"></div></div>
+  </div>
+  <div class="row">
+    <div class="cell"><b id="tb" style="color:var(--bat)">--</b><span>Batteries</span></div>
+    <div class="cell"><b id="tx" style="color:var(--box)">--</b><span>Compartiment</span></div>
+    <div class="cell"><b id="te" style="color:var(--ext)">--</b><span>Extérieur</span></div>
+  </div>
+  <div id="alerts"></div>
+
+  <h2>Historique <span class="seg" id="seg"><button data-d="1" class="sel">24 h</button><button data-d="7">7 j</button><button data-d="30">30 j</button></span></h2>
+  <div class="chart"><canvas id="cSoc"></canvas><div class="tip" id="tipSoc"></div></div>
+  <div class="legend"><span><i style="background:var(--ok)"></i>Charge (%)</span><span><i style="background:var(--bad)"></i>Seuil d'alarme</span><span><i style="background:var(--inv)"></i>Onduleur ouvert</span></div>
+  <div class="chart"><canvas id="cTmp"></canvas><div class="tip" id="tipTmp"></div></div>
+  <div class="legend"><span><i style="background:var(--bat)"></i>Batteries</span><span><i style="background:var(--box)"></i>Compartiment</span><span><i style="background:var(--ext)"></i>Extérieur</span></div>
+
+  <h2>Jour par jour</h2>
+  <table><thead><tr><th>Jour</th><th>Charge</th><th>Batt. min</th><th>Extérieur</th></tr></thead><tbody id="days"></tbody></table>
+
+  <footer><span id="foot"></span> · <button class="link" id="changeBtn">Changer de canal</button></footer>
+</section>
+</main>
+<script>
+// Seuils d'alarme : les mêmes que les réglages par défaut du moniteur (à ajuster au besoin)
+const SEUIL = {soc: 30, tension: 12.0, battFroide: 2.0, compChaud: 35, silenceH: 26};
+
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = (v, d = 1) => v == null || isNaN(v) ? '--' : v.toFixed(d).replace('.', ',');
+let cfg = {}, days = 1, rows = [], last = null, demo = false;
+
+function readCfg() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.has('demo')) return {demo: true};
+  if (h.get('c')) return {c: h.get('c'), k: h.get('k') || ''};
+  try { const s = JSON.parse(localStorage.getItem('camp-cfg') || 'null'); if (s && s.c) return s; } catch (e) {}
+  return null;
+}
+function saveCfg(c) {
+  try { localStorage.setItem('camp-cfg', JSON.stringify(c)); } catch (e) {}
+  location.hash = 'c=' + encodeURIComponent(c.c) + (c.k ? '&k=' + encodeURIComponent(c.k) : '');
+}
+
+function ago(ms) {
+  const m = Math.round(ms / 60000);
+  if (m < 60) return m + ' min';
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + ' h' + (m % 60 && h < 6 ? ' ' + (m % 60) + ' min' : '');
+  return Math.floor(h / 24) + ' j ' + (h % 24) + ' h';
+}
+
+// ---------- Données ----------
+function parse(f) {
+  const n = k => (f[k] == null || f[k] === '') ? null : parseFloat(f[k]);
+  return {t: new Date(f.created_at).getTime(), soc: n('field1'), v: n('field2'), a: n('field3'),
+          tb: n('field4'), tx: n('field5'), te: n('field6'), pv: n('field7'), inv: n('field8')};
+}
+
+async function load() {
+  $('dot').style.background = css('--amber');
+  try {
+    if (demo) { rows = demoData(days); last = rows[rows.length - 1]; }
+    else {
+      const base = 'https://api.thingspeak.com/channels/' + encodeURIComponent(cfg.c);
+      const key = cfg.k ? 'api_key=' + encodeURIComponent(cfg.k) + '&' : '';
+      const avg = days >= 30 ? '&average=60' : days >= 7 ? '&average=20' : '';
+      const [r1, r2] = await Promise.all([
+        fetch(base + '/feeds.json?' + key + 'days=' + days + avg + '&results=8000', {cache: 'no-store'}),
+        fetch(base + '/feeds/last.json?' + key, {cache: 'no-store'})]);
+      if (r1.status === 400 || r1.status === 404) throw new Error('Canal introuvable ou clé de lecture invalide.');
+      const j = await r1.json();
+      if (j === -1 || !j.feeds) throw new Error('Canal introuvable ou clé de lecture invalide.');
+      rows = j.feeds.map(parse).filter(r => !isNaN(r.t)).sort((a, b) => a.t - b.t);
+      const l = await r2.json().catch(() => null);
+      last = l && l.created_at ? parse(l) : rows[rows.length - 1] || null;
+    }
+    $('dot').style.background = css('--ok');
+    render();
+  } catch (e) {
+    $('dot').style.background = css('--bad');
+    $('sub').textContent = e.message && !/fetch|network/i.test(e.message) ? e.message : 'Pas de connexion à ThingSpeak.';
+  }
+}
+
+// Dernière valeur connue d'un champ (le dernier envoi peut en manquer une)
+function latest(k) {
+  if (last && last[k] != null) return last[k];
+  for (let i = rows.length - 1; i >= 0; i--) if (rows[i][k] != null) return rows[i][k];
+  return null;
+}
+
+// ---------- Affichage ----------
+function render() {
+  const soc = latest('soc'), v = latest('v'), a = latest('a');
+  const tb = latest('tb'), tx = latest('tx'), te = latest('te');
+  const col = soc == null ? css('--mute') : soc < SEUIL.soc ? css('--bad') : soc < 50 ? css('--amber') : css('--ok');
+  $('soc').textContent = soc == null ? '--' : Math.round(soc);
+  $('soc').style.color = col;
+  $('fill').style.width = (soc || 0) + '%';
+  $('fill').style.background = col;
+  $('mk').style.left = SEUIL.soc + '%';
+  const age = last ? Date.now() - last.t : null;
+  let sub = fmt(v, 2) + ' V · ' + (a == null ? '--' : (a >= 0 ? '+' : '') + fmt(a)) + ' A';
+  if (last) sub += ' · mesuré il y a ' + ago(age);
+  $('sub').textContent = sub;
+  $('tb').textContent = fmt(tb) + ' °C';
+  $('tx').textContent = fmt(tx) + ' °C';
+  $('te').textContent = fmt(te) + ' °C';
+
+  // Alertes, calculées ici à partir des dernières valeurs
+  const al = [];
+  if (!last) al.push(['bad', 'Aucune donnée reçue du camp pour l\'instant.']);
+  else if (age > SEUIL.silenceH * 3600e3) al.push(['bad', 'Aucune nouvelle du camp depuis ' + ago(age) + '. Batteries à plat, onduleur ou Starlink en panne ?']);
+  if (soc != null && soc < SEUIL.soc) al.push(['bad', 'Charge des batteries basse : ' + Math.round(soc) + ' %.']);
+  if (v != null && v < SEUIL.tension) al.push(['bad', 'Tension des batteries basse : ' + fmt(v, 2) + ' V.']);
+  if (tb != null && tb < SEUIL.battFroide) al.push(['bad', 'Batteries trop froides : ' + fmt(tb) + ' °C. Le fil chauffant suffit-il ?']);
+  if (tx != null && tx > SEUIL.compChaud) al.push(['bad', 'Compartiment trop chaud : ' + fmt(tx) + ' °C. Thermostat collé ?']);
+  const day = rows.filter(r => r.t > Date.now() - 864e5);
+  const tbMin = Math.min(...day.map(r => r.tb).filter(x => x != null));
+  if (isFinite(tbMin) && tbMin < SEUIL.battFroide && !(tb != null && tb < SEUIL.battFroide))
+    al.push(['', 'Les batteries sont descendues à ' + fmt(tbMin) + ' °C dans les dernières 24 h.']);
+  if (!al.length && last) al.push(['ok', 'Tout va bien.']);
+  $('alerts').innerHTML = al.map(([c, m]) => '<div class="al ' + c + '">' + m.replace(/</g, '&lt;') + '</div>').join('');
+  $('dot').style.background = al.some(x => x[0] === 'bad') ? css('--bad') : css('--ok');
+
+  drawAll();
+  dayTable();
+  $('foot').textContent = demo ? 'Données de démonstration' : 'Canal ThingSpeak ' + cfg.c + ' · ' + rows.length + ' points';
+}
+
+// ---------- Graphiques ----------
+const charts = {};
+function chart(id, series, fixed, unit) {
+  const cv = $(id), dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const L = 34, R = 8, T = 10, B = 20, pw = W - L - R, ph = H - T - B;
+  const t1 = Date.now(), t0 = t1 - days * 864e5;
+  const x = t => L + (t - t0) / (t1 - t0) * pw;
+  let lo, hi;
+  if (fixed) [lo, hi] = fixed;
+  else {
+    const vals = series.flatMap(s => rows.map(r => r[s.k])).filter(v => v != null);
+    if (!vals.length) { lo = 0; hi = 10; } else { lo = Math.floor(Math.min(...vals) - 1); hi = Math.ceil(Math.max(...vals) + 1); }
+  }
+  const y = v => T + ph - (v - lo) / (hi - lo) * ph;
+  // Fond : onduleur ouvert
+  g.fillStyle = css('--inv');
+  const step = rows.length > 1 ? Math.max(3e5, (rows[rows.length - 1].t - rows[0].t) / rows.length) : 3e5;
+  rows.forEach(r => { if (r.inv > 0) g.fillRect(x(r.t), T, Math.max(1, step / (t1 - t0) * pw), ph); });
+  // Grille
+  g.strokeStyle = css('--rule'); g.fillStyle = css('--mute'); g.font = '11px system-ui'; g.lineWidth = 1;
+  const span = hi - lo, st = fixed ? 25 : span > 40 ? 10 : span > 16 ? 5 : span > 8 ? 2 : 1;
+  for (let v = Math.ceil(lo / st) * st; v <= hi; v += st) {
+    g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke();
+    g.fillText(v + unit, 2, y(v) + 4);
+  }
+  const lbl = days === 1 ? 'il y a 24 h' : 'il y a ' + days + ' j';
+  g.fillText(lbl, L, H - 5);
+  const nw = 'maintenant'; g.fillText(nw, W - R - g.measureText(nw).width, H - 5);
+  if (fixed) {
+    g.setLineDash([4, 4]); g.strokeStyle = css('--bad');
+    g.beginPath(); g.moveTo(L, y(SEUIL.soc)); g.lineTo(W - R, y(SEUIL.soc)); g.stroke(); g.setLineDash([]);
+  }
+  // Courbes (trou si plus de 3 pas sans donnée)
+  for (const s of series) {
+    g.strokeStyle = css(s.c); g.lineWidth = 2; g.beginPath();
+    let prev = null;
+    for (const r of rows) {
+      const v = r[s.k];
+      if (v == null || r.t < t0) { prev = null; continue; }
+      if (prev && r.t - prev.t <= step * 3) g.lineTo(x(r.t), y(v)); else g.moveTo(x(r.t), y(v));
+      prev = r;
+    }
+    g.stroke();
+  }
+  charts[id] = {x, L, R, W, t0, t1, series, unit};
+}
+
+function drawAll() {
+  chart('cSoc', [{k: 'soc', c: '--ok', n: 'Charge'}], [0, 100], '%');
+  chart('cTmp', [{k: 'te', c: '--ext', n: 'Ext.'}, {k: 'tx', c: '--box', n: 'Comp.'}, {k: 'tb', c: '--bat', n: 'Batt.'}], null, '°');
+}
+
+// Toucher / survol : valeurs au point le plus proche
+function bindTip(id, tipId) {
+  const cv = $(id), tip = $(tipId);
+  const show = ev => {
+    const c = charts[id]; if (!c || !rows.length) return;
+    const rect = cv.getBoundingClientRect();
+    const px = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+    const t = c.t0 + (px - c.L) / (c.W - c.L - c.R) * (c.t1 - c.t0);
+    let best = null;
+    for (const r of rows) if (!best || Math.abs(r.t - t) < Math.abs(best.t - t)) best = r;
+    if (!best) return;
+    const d = new Date(best.t);
+    tip.textContent = d.toLocaleString('fr-CA', {weekday: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) + ' · ' +
+      c.series.map(s => s.n + ' ' + fmt(best[s.k], s.k === 'soc' ? 0 : 1) + c.unit).join(' · ');
+    tip.style.display = 'block';
+    tip.style.left = Math.min(Math.max(0, px - tip.offsetWidth / 2), rect.width - tip.offsetWidth) + 'px';
+  };
+  cv.addEventListener('mousemove', show);
+  cv.addEventListener('touchstart', show, {passive: true});
+  cv.addEventListener('touchmove', show, {passive: true});
+  const hide = () => tip.style.display = 'none';
+  cv.addEventListener('mouseleave', hide);
+  cv.addEventListener('touchend', () => setTimeout(hide, 1500));
+}
+
+// ---------- Tableau jour par jour ----------
+function dayTable() {
+  const by = new Map();
+  for (const r of rows) {
+    const k = new Date(r.t).toLocaleDateString('fr-CA', {weekday: 'short', day: 'numeric'});
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(r);
+  }
+  const mm = (a, k, f) => { const v = a.map(r => r[k]).filter(x => x != null); return v.length ? f(...v) : null; };
+  const out = [...by.entries()].reverse().map(([k, a]) => {
+    const bmin = mm(a, 'tb', Math.min);
+    return '<tr><td>' + k + '</td><td>' + fmt(mm(a, 'soc', Math.min), 0) + '–' + fmt(mm(a, 'soc', Math.max), 0) + ' %</td>' +
+      '<td class="' + (bmin != null && bmin < SEUIL.battFroide ? 'cold' : '') + '">' + fmt(bmin) + '°</td>' +
+      '<td>' + fmt(mm(a, 'te', Math.min)) + ' / ' + fmt(mm(a, 'te', Math.max)) + '°</td></tr>';
+  });
+  $('days').innerHTML = out.join('') || '<tr><td colspan="4" class="hint">Pas de données pour cette période.</td></tr>';
+}
+
+// ---------- Démo ----------
+function demoData(d) {
+  const out = [], now = Date.now(), stepMin = d >= 30 ? 60 : d >= 7 ? 20 : 5;
+  let soc = 78;
+  for (let t = now - d * 864e5; t <= now - 3600e3; t += stepMin * 6e4) {
+    const h = new Date(t).getHours() + new Date(t).getMinutes() / 60, dayN = t / 864e5;
+    const sun = Math.max(0, Math.sin((h - 7.5) / 9 * Math.PI)) * (0.4 + 0.6 * Math.abs(Math.sin(dayN * 1.3)));
+    const inv = h >= 12 && h < 13;
+    const a = sun * 38 - 1.2 - (inv ? 9 : 0) - 4 * (h < 7 || h > 20);
+    soc = Math.min(100, Math.max(5, soc + a * stepMin / 60 / 960 * 100));
+    const te = -12 + 7 * Math.sin((h - 9) / 24 * 2 * Math.PI) + 5 * Math.sin(dayN * 0.9);
+    const tx = 6 + 1.5 * Math.sin(h / 3) + 0.05 * te;
+    out.push({t, soc, v: 13.0 + soc / 100 * 0.45 + a * 0.004, a, tb: tx - 0.6, tx, te, pv: sun * 520, inv: inv ? 1 : 0});
+  }
+  return out;
+}
+
+// ---------- Démarrage ----------
+function start() {
+  const c = readCfg();
+  $('setup').classList.toggle('hide', !!c);
+  $('dash').classList.toggle('hide', !c);
+  if (!c) return;
+  demo = !!c.demo;
+  cfg = c;
+  load();
+}
+$('fSetup').onsubmit = e => {
+  e.preventDefault();
+  saveCfg({c: $('inC').value.trim(), k: $('inK').value.trim()});
+};
+$('demoBtn').onclick = () => location.hash = 'demo';
+$('changeBtn').onclick = () => { try { localStorage.removeItem('camp-cfg'); } catch (e) {} history.replaceState(null, '', location.pathname); start(); };
+$('refresh').onclick = load;
+$('seg').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  days = +b.dataset.d;
+  document.querySelectorAll('#seg button').forEach(x => x.classList.toggle('sel', x === b));
+  load();
+});
+window.addEventListener('hashchange', start);
+window.addEventListener('resize', () => rows.length && drawAll());
+document.addEventListener('visibilitychange', () => { if (!document.hidden && cfg && (cfg.c || cfg.demo)) load(); });
+bindTip('cSoc', 'tipSoc');
+bindTip('cTmp', 'tipTmp');
+start();
+</script>
+</body></html>
