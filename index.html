@@ -223,9 +223,13 @@ function render() {
   $('dot').style.background = al.some(x => x[0] === 'bad') ? css('--bad') : css('--ok');
 
   const inv = latest('inv');
-  $('inv').textContent = inv == null ? '--' : inv >= 1.5 ? 'Mode camp' : inv > 0 ? 'Allumé' : 'Fermé';
-  $('inv').style.color = inv > 0 ? css('--blue') : css('--ink');
-  $('invT').textContent = last ? 'Au dernier envoi, il y a ' + ago(age) : 'Au dernier envoi';
+  // Onduleur ouvert = Starlink allumé = un point aux 5 min. Plus de 12 min sans nouvelles : il est fermé (ou le camp est hors ligne).
+  const stale = last && age > 12 * 60e3;
+  $('inv').textContent = inv == null ? '--' : (inv > 0 && stale) ? 'Fermé ou hors ligne' : inv >= 1.5 ? 'Mode camp' : inv > 0 ? 'Allumé' : 'Fermé';
+  $('inv').style.color = inv > 0 && !stale ? css('--blue') : css('--ink');
+  $('invT').textContent = !last ? 'Aucune donnée' : stale
+    ? 'Dernier signe de vie il y a ' + ago(age) + (inv > 0 ? ' (onduleur ' + (inv >= 1.5 ? 'en mode camp' : 'allumé') + ' à ce moment)' : '')
+    : 'Mis à jour aux 5 min · il y a ' + ago(age);
   remoteUi();
   drawAll();
   dayTable();
