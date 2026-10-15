@@ -9,7 +9,8 @@
 <!--
   Tableau de bord du camp de pêche — lit le canal ThingSpeak rempli par le moniteur
   des batteries (ESP32). Aucune ressource externe sauf l'API ThingSpeak.
-  Adresse : index.html#c=<n° de canal>&k=<clé de LECTURE>   (ou #demo pour la démo)
+  Adresse : index.html#c=<n° de canal>&k=<clé de LECTURE>&t=<n° TalkBack>&tk=<clé TalkBack>   (ou #demo)
+  TalkBack (facultatif) : file de commandes que le moniteur lit aux 30 s quand le Starlink est allumé.
   Champs : 1 SOC %, 2 tension V, 3 courant A, 4 T batterie, 5 T compartiment,
            6 T extérieur, 7 solaire W, 8 onduleur (0/1)
 -->
@@ -58,6 +59,8 @@ input{width:100%;font:inherit;font-size:17px;padding:8px 10px;margin-top:3px;bor
 form button{font:inherit;font-weight:600;border-radius:9px;border:1.5px solid var(--ink);background:var(--ink);color:var(--bg);padding:10px 14px;cursor:pointer}
 .link{background:none;border:0;color:var(--blue);font:inherit;font-size:14px;padding:0;cursor:pointer;text-decoration:underline}
 .hint{font-size:13px;color:var(--mute)}
+button.big{flex:1;font:inherit;font-size:15px;font-weight:700;border-radius:10px;border:1.5px solid var(--ink);background:var(--panel);color:var(--ink);padding:12px 8px;cursor:pointer}
+button.big:disabled{opacity:.4}
 .hide{display:none!important}
 footer{margin-top:28px;font-size:13px;color:var(--mute)}
 </style></head><body><main>
@@ -69,6 +72,8 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
   <form id="fSetup">
     <label>N° du canal (Channel ID)<input id="inC" inputmode="numeric" required></label>
     <label>Clé de LECTURE (Read API Key, vide si le canal est public)<input id="inK" autocapitalize="off"></label>
+    <label>TalkBack : n° (facultatif, pour commander l'onduleur)<input id="inT" inputmode="numeric"></label>
+    <label>TalkBack : clé API<input id="inTk" autocapitalize="off"></label>
     <button type="submit">Afficher</button>
   </form>
   <p class="hint">L'adresse de la page contiendra ces informations : ajoute-la ensuite à l'écran d'accueil (Safari → Partager → Sur l'écran d'accueil).</p>
@@ -87,6 +92,19 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
     <div class="cell"><b id="te" style="color:var(--ext)">--</b><span>Extérieur</span></div>
   </div>
   <div id="alerts"></div>
+
+  <h2>Onduleur</h2>
+  <div class="row">
+    <div class="cell"><b id="inv">--</b><span id="invT">Au dernier envoi</span></div>
+  </div>
+  <div id="remote">
+    <div class="row" style="gap:8px">
+      <button class="big" id="bOff">Fermer l'onduleur</button>
+      <button class="big" id="bCamp">Mode camp (garder allumé)</button>
+    </div>
+    <p class="hint" id="queue"></p>
+  </div>
+  <p class="hint" id="noRemote">Pour commander l'onduleur d'ici, ajoute le n° et la clé TalkBack (bouton « Changer de canal » en bas).</p>
 
   <h2>Historique <span class="seg" id="seg"><button data-d="1" class="sel">24 h</button><button data-d="7">7 j</button><button data-d="30">30 j</button></span></h2>
   <div class="chart"><canvas id="cSoc"></canvas><div class="tip" id="tipSoc"></div></div>
@@ -112,13 +130,14 @@ let cfg = {}, days = 1, rows = [], last = null, demo = false;
 function readCfg() {
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.has('demo')) return {demo: true};
-  if (h.get('c')) return {c: h.get('c'), k: h.get('k') || ''};
+  if (h.get('c')) return {c: h.get('c'), k: h.get('k') || '', t: h.get('t') || '', tk: h.get('tk') || ''};
   try { const s = JSON.parse(localStorage.getItem('camp-cfg') || 'null'); if (s && s.c) return s; } catch (e) {}
   return null;
 }
 function saveCfg(c) {
   try { localStorage.setItem('camp-cfg', JSON.stringify(c)); } catch (e) {}
-  location.hash = 'c=' + encodeURIComponent(c.c) + (c.k ? '&k=' + encodeURIComponent(c.k) : '');
+  location.hash = 'c=' + encodeURIComponent(c.c) + (c.k ? '&k=' + encodeURIComponent(c.k) : '') +
+    (c.t ? '&t=' + encodeURIComponent(c.t) + '&tk=' + encodeURIComponent(c.tk) : '');
 }
 
 function ago(ms) {
@@ -203,10 +222,47 @@ function render() {
   $('alerts').innerHTML = al.map(([c, m]) => '<div class="al ' + c + '">' + m.replace(/</g, '&lt;') + '</div>').join('');
   $('dot').style.background = al.some(x => x[0] === 'bad') ? css('--bad') : css('--ok');
 
+  const inv = latest('inv');
+  $('inv').textContent = inv == null ? '--' : inv >= 1.5 ? 'Mode camp' : inv > 0 ? 'Allumé' : 'Fermé';
+  $('inv').style.color = inv > 0 ? css('--blue') : css('--ink');
+  $('invT').textContent = last ? 'Au dernier envoi, il y a ' + ago(age) : 'Au dernier envoi';
+  remoteUi();
   drawAll();
   dayTable();
   $('foot').textContent = demo ? 'Données de démonstration' : 'Canal ThingSpeak ' + cfg.c + ' · ' + rows.length + ' points';
 }
+
+// ---------- Commandes à distance (ThingSpeak TalkBack) ----------
+const TB = () => 'https://api.thingspeak.com/talkbacks/' + encodeURIComponent(cfg.t) + '/commands';
+async function remoteUi() {
+  const ok = !demo && cfg.t && cfg.tk;
+  $('remote').classList.toggle('hide', !ok && !demo);
+  $('noRemote').classList.toggle('hide', ok || demo);
+  if (!ok) { $('queue').textContent = demo ? 'Démo : les boutons ne font rien.' : ''; return; }
+  try {
+    const r = await fetch(TB() + '.json?api_key=' + encodeURIComponent(cfg.tk), {cache: 'no-store'});
+    const l = await r.json();
+    const q = (Array.isArray(l) ? l : []).filter(x => !x.executed_at);
+    $('queue').textContent = q.length
+      ? 'En attente : ' + q.map(x => x.command_string === 'OFF' ? 'fermer' : x.command_string === 'CAMP' ? 'mode camp' : x.command_string).join(', ') +
+        '. Le moniteur l\'exécutera dès que le Starlink sera allumé (sinon au prochain envoi quotidien). Confirmation sur Pushover.'
+      : 'Aucune commande en attente.';
+  } catch (e) { $('queue').textContent = 'Impossible de lire la file TalkBack.'; }
+}
+async function send(cmd, label) {
+  if (demo) return;
+  if (!confirm(label + ' ?\n\nLa commande sera exécutée dès que le moniteur sera en ligne (Starlink allumé), sinon au prochain envoi quotidien.')) return;
+  try {
+    // Une seule commande à la fois : on vide la file avant d'ajouter
+    await fetch(TB() + '.json?api_key=' + encodeURIComponent(cfg.tk), {method: 'DELETE'}).catch(() => {});
+    const b = new URLSearchParams({api_key: cfg.tk, command_string: cmd});
+    const r = await fetch(TB() + '.json', {method: 'POST', body: b});
+    if (!r.ok) throw new Error();
+  } catch (e) { alert('La commande n\'a pas pu être envoyée. Vérifie le n° et la clé TalkBack.'); }
+  remoteUi();
+}
+$('bOff').onclick = () => send('OFF', 'Fermer l\'onduleur du camp');
+$('bCamp').onclick = () => send('CAMP', 'Mettre le camp en mode camp (onduleur allumé en continu)');
 
 // ---------- Graphiques ----------
 const charts = {};
@@ -334,7 +390,7 @@ function start() {
 }
 $('fSetup').onsubmit = e => {
   e.preventDefault();
-  saveCfg({c: $('inC').value.trim(), k: $('inK').value.trim()});
+  saveCfg({c: $('inC').value.trim(), k: $('inK').value.trim(), t: $('inT').value.trim(), tk: $('inTk').value.trim()});
 };
 $('demoBtn').onclick = () => location.hash = 'demo';
 $('changeBtn').onclick = () => { try { localStorage.removeItem('camp-cfg'); } catch (e) {} history.replaceState(null, '', location.pathname); start(); };
