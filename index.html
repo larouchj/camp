@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="apple-touch-icon" sizes="180x180" href="https://larouchj.github.io/camp/camp-icone.png?v=2">
 <link rel="icon" type="image/png" sizes="180x180" href="https://larouchj.github.io/camp/camp-icone.png?v=2">
+<link rel="manifest" href="manifest.webmanifest">
 <title>Camp de pêche</title>
 <!--
   Tableau de bord du camp de pêche — lit le canal ThingSpeak rempli par le moniteur
@@ -94,6 +95,7 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
     <div class="cell"><b id="ioIn" style="color:var(--sun)">--</b><span>Entre (solaire)</span></div>
     <div class="cell"><b id="ioOut" style="color:var(--amber)">--</b><span>Sort (camp)</span></div>
   </div>
+  <p class="hint hide" id="phase" style="margin:6px 2px 0"></p>
   <div class="row">
     <div class="cell"><b id="tb" style="color:var(--bat)">--</b><span>Batteries</span></div>
     <div class="cell"><b id="tx" style="color:var(--box)">--</b><span>Compartiment</span></div>
@@ -214,13 +216,13 @@ async function load() {
       if (cfg.c2) {
         const k2 = cfg.k2 ? 'api_key=' + encodeURIComponent(cfg.k2) + '&' : '';
         const r3 = await fetch('https://api.thingspeak.com/channels/' + encodeURIComponent(cfg.c2) + '/feeds.json?' + k2 +
-          (days < 1 ? 'minutes=' + Math.round(days * 1440) : 'days=' + days) + avg + '&results=8000', {cache: 'no-store'}).catch(() => null);
+          (days < 1 ? 'minutes=' + Math.round(days * 1440) : 'days=' + days) + avg + '&status=true&results=8000', {cache: 'no-store'}).catch(() => null);
         const j2 = r3 && r3.ok ? await r3.json().catch(() => null) : null;
         if (j2 && j2.feeds) rows2 = j2.feeds.map(f => {
           const n = k => (f[k] == null || f[k] === '') ? null : parseFloat(f[k]);
           const p60 = n('field1'), p20 = n('field2');
           return {t: new Date(f.created_at).getTime(), p60, p20, load: n('field4'), ah: n('field6'), cons: n('field8'),
-                  ttg: n('field3'), hf: n('field5'), ce: n('field7'),
+                  ttg: n('field3'), hf: n('field5'), ce: n('field7'), ph: f.status || null,
                   tot: p60 == null && p20 == null ? null : (p60 || 0) + (p20 || 0)};
         }).filter(r => !isNaN(r.t)).sort((a, b) => a.t - b.t);
       }
@@ -336,6 +338,10 @@ function solUi() {
   $('ioRow').classList.remove('hide');
   $('ioIn').textContent = a(lt('tot'));
   $('ioOut').textContent = a(lt('cons'));
+  // Phase de charge des Rover (« status » ThingSpeak du dernier envoi)
+  const ph = lt('ph');
+  $('phase').classList.toggle('hide', !ph);
+  $('phase').textContent = ph ? 'Phase de charge : ' + ph : '';
   // Fil chauffant (sortie LOAD du Rover 60A), même règle que le rapport de midi : au repos le LOAD = l'ESP
   // seul (le minimum de la période), au-dessus de ce minimum + 1 A le fil chauffe. Sur les 24 dernières h.
   {
@@ -500,6 +506,8 @@ function start() {
   $('setup').classList.toggle('hide', !!c);
   $('dash').classList.toggle('hide', !c);
   if (!c) return;
+  // Garde le canal en mémoire : l'icône de l'écran d'accueil marche même si iOS l'ouvre sans le #
+  if (!c.demo) try { localStorage.setItem('camp-cfg', JSON.stringify(c)); } catch (e) {}
   demo = !!c.demo;
   cfg = c;
   load();
