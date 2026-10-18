@@ -93,6 +93,11 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
     <div class="cell"><b id="tx" style="color:var(--box)">--</b><span>Compartiment</span></div>
     <div class="cell"><b id="te" style="color:var(--ext)">--</b><span>Extérieur</span></div>
   </div>
+  <div class="row hide" id="battRow">
+    <div class="cell"><b id="bTtg">--</b><span>Autonomie</span></div>
+    <div class="cell"><b id="bHf">--</b><span>Dernier plein</span></div>
+    <div class="cell"><b id="bCe">--</b><span>Consommé depuis</span></div>
+  </div>
   <div id="alerts"></div>
 
   <h2>Onduleur</h2>
@@ -117,7 +122,7 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
   <section id="solSec" class="hide">
     <h2>Solaire <span class="hint" id="solAge" style="font-weight:400"></span></h2>
     <div class="row">
-      <div class="cell"><b id="sTot" style="color:var(--sun)">--</b><span>Production totale</span></div>
+      <div class="cell"><b id="sTot" style="color:var(--sun)">--</b><span>Charge solaire</span></div>
       <div class="cell"><b id="sAh">--</b><span>Chargé aujourd'hui</span></div>
     </div>
     <div class="row">
@@ -129,7 +134,7 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
       <div class="cell"><b id="sCons">--</b><span>Conso du camp (≈)</span></div>
     </div>
     <div class="chart"><canvas id="cSol"></canvas><div class="tip" id="tipSol"></div></div>
-    <div class="legend"><span><i style="background:var(--sun)"></i>Rover 60A</span><span><i style="background:var(--s20)"></i>Rover 20A</span><span><i style="background:var(--amber)"></i>LOAD (fil chauffant)</span></div>
+    <div class="legend"><span><i style="background:var(--sun)"></i>Rover 60A (A)</span><span><i style="background:var(--s20)"></i>Rover 20A (A)</span><span><i style="background:var(--amber)"></i>LOAD (A)</span></div>
   </section>
 
   <h2>Jour par jour</h2>
@@ -204,6 +209,7 @@ async function load() {
           const n = k => (f[k] == null || f[k] === '') ? null : parseFloat(f[k]);
           const p60 = n('field1'), p20 = n('field2');
           return {t: new Date(f.created_at).getTime(), p60, p20, load: n('field4'), ah: n('field6'), cons: n('field8'),
+                  ttg: n('field3'), hf: n('field5'), ce: n('field7'),
                   tot: p60 == null && p20 == null ? null : (p60 || 0) + (p20 || 0)};
         }).filter(r => !isNaN(r.t)).sort((a, b) => a.t - b.t);
       }
@@ -309,12 +315,18 @@ function solUi() {
   $('solSec').classList.toggle('hide', !rows2.length);
   if (!rows2.length) return;
   const lt = k => { for (let i = rows2.length - 1; i >= 0; i--) if (rows2[i][k] != null) return rows2[i][k]; return null; };
-  const w = v => v == null ? '--' : fmt(v, 0) + ' W';
-  $('sTot').textContent = w(lt('tot'));
-  $('s60').textContent = w(lt('p60'));
-  $('s20').textContent = w(lt('p20'));
-  $('sLoad').textContent = w(lt('load'));
-  $('sCons').textContent = w(lt('cons'));
+  const a = (v, d = 1) => v == null ? '--' : fmt(v, d) + ' A';
+  $('sTot').textContent = a(lt('tot'));
+  $('s60').textContent = a(lt('p60'));
+  $('s20').textContent = a(lt('p20'));
+  $('sLoad').textContent = a(lt('load'), 2);
+  $('sCons').textContent = a(lt('cons'));
+  // SmartShunt (envoyé par le canal 2) : autonomie, dernier plein, Ah consommés
+  const ttg = lt('ttg'), hf = lt('hf'), ce = lt('ce');
+  $('battRow').classList.toggle('hide', ttg == null && hf == null && ce == null);
+  $('bTtg').textContent = ttg == null ? '--' : ttg >= 48 ? Math.round(ttg / 24) + ' j' : Math.floor(ttg) + ' h ' + String(Math.round(ttg % 1 * 60)).padStart(2, '0');
+  $('bHf').textContent = hf == null ? '--' : 'il y a ' + (hf >= 48 ? Math.round(hf / 24) + ' j' : Math.round(hf) + ' h');
+  $('bCe').textContent = ce == null ? '--' : fmt(Math.abs(ce), 0) + ' Ah';
   $('sAh').textContent = lt('ah') == null ? '--' : fmt(lt('ah'), 0) + ' Ah';
   $('solAge').textContent = '· il y a ' + ago(Date.now() - rows2[rows2.length - 1].t);
 }
@@ -386,7 +398,7 @@ function chart(id, series, fixed, unit, data = rows, zero = false) {
 function drawAll() {
   chart('cSoc', [{k: 'soc', c: '--ok', n: 'Charge'}], [0, 100], '%');
   chart('cTmp', [{k: 'te', c: '--ext', n: 'Ext.'}, {k: 'tx', c: '--box', n: 'Comp.'}, {k: 'tb', c: '--bat', n: 'Batt.'}], null, '°');
-  if (rows2.length) chart('cSol', [{k: 'p60', c: '--sun', n: '60A'}, {k: 'p20', c: '--s20', n: '20A'}, {k: 'load', c: '--amber', n: 'LOAD'}], null, ' W', rows2, true);
+  if (rows2.length) chart('cSol', [{k: 'p60', c: '--sun', n: '60A'}, {k: 'p20', c: '--s20', n: '20A'}, {k: 'load', c: '--amber', n: 'LOAD'}], null, ' A', rows2, true);
 }
 
 // Toucher / survol : valeurs au point le plus proche
