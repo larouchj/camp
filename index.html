@@ -88,15 +88,18 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
     <p id="sub">Chargement…</p>
     <div class="bar"><div class="fill" id="fill"></div><div class="mk" id="mk"></div></div>
   </div>
+  <div class="row hide" id="ioRow">
+    <div class="cell"><b id="ioIn" style="color:var(--sun)">--</b><span>Entre (solaire)</span></div>
+    <div class="cell"><b id="ioOut" style="color:var(--amber)">--</b><span>Sort (camp)</span></div>
+  </div>
   <div class="row">
     <div class="cell"><b id="tb" style="color:var(--bat)">--</b><span>Batteries</span></div>
     <div class="cell"><b id="tx" style="color:var(--box)">--</b><span>Compartiment</span></div>
     <div class="cell"><b id="te" style="color:var(--ext)">--</b><span>Extérieur</span></div>
   </div>
-  <div class="row hide" id="battRow">
-    <div class="cell"><b id="bTtg">--</b><span>Autonomie</span></div>
-    <div class="cell"><b id="bHf">--</b><span>Dernier plein</span></div>
-    <div class="cell"><b id="bCe">--</b><span>Consommé depuis</span></div>
+  <div class="row hide" id="heatRow">
+    <div class="cell"><b id="hTime" style="color:var(--amber)">--</b><span id="hTimeT">Fil chauffant, 24 h</span></div>
+    <div class="cell"><b id="hAh" style="color:var(--amber)">--</b><span>Utilisé par le fil</span></div>
   </div>
   <div id="alerts"></div>
 
@@ -139,6 +142,12 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
 
   <h2>Jour par jour</h2>
   <table><thead><tr><th>Jour</th><th>Charge</th><th>Batt. min</th><th>Extérieur</th></tr></thead><tbody id="days"></tbody></table>
+
+  <div class="row hide" id="battRow">
+    <div class="cell"><b id="bTtg">--</b><span>Autonomie</span></div>
+    <div class="cell"><b id="bHf">--</b><span>Dernier plein</span></div>
+    <div class="cell"><b id="bCe">--</b><span>Consommé depuis</span></div>
+  </div>
 
   <footer><span id="foot"></span> · <button class="link" id="changeBtn">Changer de canal</button></footer>
 </section>
@@ -321,6 +330,28 @@ function solUi() {
   $('s20').textContent = a(lt('p20'));
   $('sLoad').textContent = a(lt('load'), 2);
   $('sCons').textContent = a(lt('cons'));
+  // Sous le SOC : ce qui entre (charge solaire) et ce qui sort (consommation du camp)
+  $('ioRow').classList.remove('hide');
+  $('ioIn').textContent = a(lt('tot'));
+  $('ioOut').textContent = a(lt('cons'));
+  // Fil chauffant (sortie LOAD du Rover 60A), même règle que le rapport de midi : au repos le LOAD = l'ESP
+  // seul (le minimum de la période), au-dessus de ce minimum + 1 A le fil chauffe. Sur les 24 dernières h.
+  {
+    const t0 = Date.now() - 864e5, L = rows2.filter(r => r.t >= t0 && r.load != null);
+    if (L.length >= 2) {
+      const idle = Math.min(...L.map(r => r.load));
+      let h = 0, ah = 0;
+      for (let i = 0; i < L.length - 1; i++) {
+        const dt = Math.min(L[i + 1].t - L[i].t, 20 * 60e3) / 36e5;   // trou dans les données : 20 min au plus
+        if (L[i].load > idle + 1) { h += dt; ah += (L[i].load - idle) * dt; }
+      }
+      const span = (L[L.length - 1].t - L[0].t) / 36e5;
+      $('heatRow').classList.remove('hide');
+      $('hTime').textContent = h < 1 ? Math.round(h * 60) + ' min' : Math.floor(h) + ' h ' + String(Math.round(h % 1 * 60)).padStart(2, '0');
+      $('hAh').textContent = fmt(ah, 0) + ' Ah';
+      $('hTimeT').textContent = 'Fil chauffant, ' + (span >= 20 ? '24 h' : Math.max(1, Math.round(span)) + ' h');
+    } else $('heatRow').classList.add('hide');
+  }
   // SmartShunt (envoyé par le canal 2) : autonomie, dernier plein, Ah consommés
   const ttg = lt('ttg'), hf = lt('hf'), ce = lt('ce');
   $('battRow').classList.toggle('hide', ttg == null && hf == null && ce == null);
