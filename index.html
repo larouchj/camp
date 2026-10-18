@@ -106,7 +106,7 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
   </div>
   <p class="hint" id="noRemote">Pour commander l'onduleur d'ici, ajoute le n° et la clé TalkBack (bouton « Changer de canal » en bas).</p>
 
-  <h2>Historique <span class="seg" id="seg"><button data-d="1" class="sel">24 h</button><button data-d="7">7 j</button><button data-d="30">30 j</button></span></h2>
+  <h2>Historique <span class="seg" id="seg"><button data-d="0.0417">1 h</button><button data-d="1" class="sel">24 h</button><button data-d="7">7 j</button><button data-d="30">30 j</button></span></h2>
   <div class="chart"><canvas id="cSoc"></canvas><div class="tip" id="tipSoc"></div></div>
   <div class="legend"><span><i style="background:var(--ok)"></i>Charge (%)</span><span><i style="background:var(--bad)"></i>Seuil d'alarme</span><span><i style="background:var(--inv)"></i>Onduleur ouvert</span></div>
   <div class="chart"><canvas id="cTmp"></canvas><div class="tip" id="tipTmp"></div></div>
@@ -164,7 +164,7 @@ async function load() {
       const key = cfg.k ? 'api_key=' + encodeURIComponent(cfg.k) + '&' : '';
       const avg = days >= 30 ? '&average=60' : days >= 7 ? '&average=20' : '';
       const [r1, r2] = await Promise.all([
-        fetch(base + '/feeds.json?' + key + 'days=' + days + avg + '&results=8000', {cache: 'no-store'}),
+        fetch(base + '/feeds.json?' + key + (days < 1 ? 'minutes=' + Math.round(days * 1440) : 'days=' + days) + avg + '&results=8000', {cache: 'no-store'}),
         fetch(base + '/feeds/last.json?' + key, {cache: 'no-store'})]);
       if (r1.status === 400 || r1.status === 404) throw new Error('Canal introuvable ou clé de lecture invalide.');
       const j = await r1.json();
@@ -295,9 +295,24 @@ function chart(id, series, fixed, unit) {
     g.beginPath(); g.moveTo(L, y(v)); g.lineTo(W - R, y(v)); g.stroke();
     g.fillText(v + unit, 2, y(v) + 4);
   }
-  const lbl = days === 1 ? 'il y a 24 h' : 'il y a ' + days + ' j';
-  g.fillText(lbl, L, H - 5);
-  const nw = 'maintenant'; g.fillText(nw, W - R - g.measureText(nw).width, H - 5);
+  // Heures sous le graphique : aux 4 h (24 h), chaque jour (7 j), aux 5 jours (30 j)
+  const stepH = days < 1 ? 0.25 : days === 1 ? 4 : days <= 7 ? 24 : 120;   // 1 h : aux 15 min
+  const first = new Date(t0); first.setSeconds(0, 0);
+  if (stepH < 1) first.setMinutes(Math.ceil(first.getMinutes() / 15) * 15);
+  else { first.setMinutes(0); if (stepH >= 24) first.setHours(0); else first.setHours(Math.ceil(first.getHours() / stepH) * stepH); }
+  const J = ['dim', 'lun', 'mar', 'mer', 'jeu', 'ven', 'sam'];
+  for (let t = first.getTime(); t <= t1; t += stepH * 3600e3) {
+    const xx = x(t);
+    if (xx < L + 2) continue;
+    g.beginPath(); g.moveTo(xx, T); g.lineTo(xx, T + ph); g.stroke();
+    const d = new Date(t);
+    const s = stepH < 24 ? String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
+      : stepH === 24 ? J[d.getDay()] : d.getDate() + '/' + (d.getMonth() + 1);
+    const w = g.measureText(s).width;
+    if (xx + w / 2 > W - R - 40) continue;   // place gardée pour « maint. »
+    g.fillText(s, Math.max(L, xx - w / 2), H - 5);
+  }
+  const nw = 'maint.'; g.fillText(nw, W - R - g.measureText(nw).width, H - 5);
   if (fixed) {
     g.setLineDash([4, 4]); g.strokeStyle = css('--bad');
     g.beginPath(); g.moveTo(L, y(SEUIL.soc)); g.lineTo(W - R, y(SEUIL.soc)); g.stroke(); g.setLineDash([]);
