@@ -116,6 +116,11 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
       <button class="big" id="bOff">Fermer l'onduleur</button>
       <button class="big" id="bCamp">Mode camp (garder allumé)</button>
     </div>
+    <p class="hint" style="margin:10px 2px 4px">Envoi de midi : l'onduleur se ferme 10 min après l'envoi (60 min le dimanche).</p>
+    <div class="row" style="gap:8px;margin-top:0">
+      <button class="big" id="bCourt" style="font-size:14px;padding:10px">Envoi court (normal)</button>
+      <button class="big" id="bLong" style="font-size:14px;padding:10px">Envoi 60 min chaque jour</button>
+    </div>
     <p class="hint" id="queue"></p>
   </div>
   <p class="hint" id="noRemote">Pour commander l'onduleur d'ici, ajoute le n° et la clé TalkBack (bouton « Changer de canal » en bas).</p>
@@ -322,6 +327,8 @@ async function send(cmd, label) {
 }
 $('bOff').onclick = () => send('OFF', 'Fermer l\'onduleur du camp');
 $('bCamp').onclick = () => send('CAMP', 'Mettre le camp en mode camp (onduleur allumé en continu)');
+$('bCourt').onclick = () => send('COURT', 'Envoi de midi court : fermer l\'onduleur 10 min après l\'envoi');
+$('bLong').onclick = () => send('LONG', 'Envoi de midi long : garder l\'onduleur ouvert 60 min chaque jour');
 
 // ---------- Section Solaire (2e canal) ----------
 function solUi() {
