@@ -79,6 +79,8 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
     <label>TalkBack : clé API<input id="inTk" autocapitalize="off"></label>
     <label>Canal « camp solaire » : n° (facultatif)<input id="inC2" inputmode="numeric"></label>
     <label>Canal « camp solaire » : clé de lecture<input id="inK2" autocapitalize="off"></label>
+    <label>Canal « camp chauffe » : n° (facultatif)<input id="inC3" inputmode="numeric"></label>
+    <label>Canal « camp chauffe » : clé de lecture<input id="inK3" autocapitalize="off"></label>
     <button type="submit">Afficher</button>
   </form>
   <p class="hint">L'adresse de la page contiendra ces informations : ajoute-la ensuite à l'écran d'accueil (Safari → Partager → Sur l'écran d'accueil).</p>
@@ -104,7 +106,9 @@ footer{margin-top:28px;font-size:13px;color:var(--mute)}
   <div class="row hide" id="heatRow">
     <div class="cell"><b id="hTime" style="color:var(--amber)">--</b><span id="hTimeT">Fil chauffant, 24 h</span></div>
     <div class="cell"><b id="hAh" style="color:var(--amber)">--</b><span>Utilisé par le fil</span></div>
+    <div class="cell hide" id="hWhoC"><b id="hWho">--</b><span id="hWhoT">Qui chauffe</span></div>
   </div>
+  <p class="hint hide" id="hDet" style="margin:6px 2px 0"></p>
   <div id="alerts"></div>
 
   <h2>Onduleur</h2>
@@ -167,13 +171,15 @@ const SEUIL = {soc: 30, tension: 12.0, battFroide: 2.0, compChaud: 35, silenceH:
 
 const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C3_DEF = '3586837';   // canal « camp chauffe » (public : pas de clé de lecture)
+const hm = h => h < 1 ? Math.round(h * 60) + ' min' : Math.floor(h) + ' h ' + String(Math.round(h % 1 * 60)).padStart(2, '0');
 const fmt = (v, d = 1) => v == null || isNaN(v) ? '--' : v.toFixed(d).replace('.', ',');
-let cfg = {}, days = 1, rows = [], last = null, demo = false, rows2 = [];
+let cfg = {}, days = 1, rows = [], last = null, demo = false, rows2 = [], heat3 = null;
 
 function readCfg() {
   const h = new URLSearchParams(location.hash.slice(1));
   if (h.has('demo')) return {demo: true};
-  if (h.get('c')) return {c: h.get('c'), k: h.get('k') || '', t: h.get('t') || '', tk: h.get('tk') || '', c2: h.get('c2') || '', k2: h.get('k2') || ''};
+  if (h.get('c')) return {c: h.get('c'), k: h.get('k') || '', t: h.get('t') || '', tk: h.get('tk') || '', c2: h.get('c2') || '', k2: h.get('k2') || '', c3: h.get('c3') || '', k3: h.get('k3') || ''};
   try { const s = JSON.parse(localStorage.getItem('camp-cfg') || 'null'); if (s && s.c) return s; } catch (e) {}
   return null;
 }
@@ -181,7 +187,8 @@ function saveCfg(c) {
   try { localStorage.setItem('camp-cfg', JSON.stringify(c)); } catch (e) {}
   location.hash = 'c=' + encodeURIComponent(c.c) + (c.k ? '&k=' + encodeURIComponent(c.k) : '') +
     (c.t ? '&t=' + encodeURIComponent(c.t) + '&tk=' + encodeURIComponent(c.tk) : '') +
-    (c.c2 ? '&c2=' + encodeURIComponent(c.c2) + (c.k2 ? '&k2=' + encodeURIComponent(c.k2) : '') : '');
+    (c.c2 ? '&c2=' + encodeURIComponent(c.c2) + (c.k2 ? '&k2=' + encodeURIComponent(c.k2) : '') : '') +
+    (c.c3 ? '&c3=' + encodeURIComponent(c.c3) + (c.k3 ? '&k3=' + encodeURIComponent(c.k3) : '') : '');
 }
 
 function ago(ms) {
@@ -232,6 +239,22 @@ async function load() {
         }).filter(r => !isNaN(r.t)).sort((a, b) => a.t - b.t);
       }
     }
+    // 3e canal « camp chauffe » : dernier point seulement (le bilan 24 h est calculé par la carte)
+    // 1 qui chauffe (0 personne, 1 ESP, 2 ESP soleil, 3 thermostat), 2 h ESP, 3 dont soleil, 4 h thermostat, 5 Ah, 6 visée
+    heat3 = null;
+    const c3 = cfg.c3 || C3_DEF;
+    if (!demo && c3) {
+      const k3 = cfg.k3 ? 'api_key=' + encodeURIComponent(cfg.k3) + '&' : '';
+      const r4 = await fetch('https://api.thingspeak.com/channels/' + encodeURIComponent(c3) + '/feeds.json?' + k3 +
+        'results=1&status=true', {cache: 'no-store'}).catch(() => null);
+      const j3 = r4 && r4.ok ? await r4.json().catch(() => null) : null;
+      const f = j3 && j3.feeds && j3.feeds[0];
+      if (f) {
+        const n = k => (f[k] == null || f[k] === '') ? null : parseFloat(f[k]);
+        heat3 = {t: new Date(f.created_at).getTime(), who: n('field1'), esp: n('field2'), sol: n('field3'), bim: n('field4'),
+                 ah: n('field5'), tgt: n('field6'), st: f.status || ''};
+      }
+    }
     $('dot').style.background = css('--ok');
     render();
   } catch (e) {
@@ -272,6 +295,10 @@ function render() {
   if (soc != null && soc < SEUIL.soc) al.push(['bad', 'Charge des batteries basse : ' + Math.round(soc) + ' %.']);
   if (v != null && v < SEUIL.tension) al.push(['bad', 'Tension des batteries basse : ' + fmt(v, 2) + ' V.']);
   if (tb != null && tb < SEUIL.battFroide) al.push(['bad', 'Batteries trop froides : ' + fmt(tb) + ' °C. Le fil chauffant suffit-il ?']);
+  if (heat3 && Date.now() - heat3.t < 3 * 3600e3 && heat3.who === 3)
+    al.push(['bad', 'Le thermostat de secours chauffe les batteries : l\'ESP ne commande pas la chauffe (débranché ou en panne ?).']);
+  else if (heat3 && heat3.bim != null && heat3.bim >= 0.25)
+    al.push(['', 'Le thermostat de secours a chauffé ' + hm(heat3.bim) + ' dans les dernières 24 h (normalement, c\'est l\'ESP).']);
   if (tx != null && tx > SEUIL.compChaud) al.push(['bad', 'Compartiment trop chaud : ' + fmt(tx) + ' °C. Thermostat collé ?']);
   const day = rows.filter(r => r.t > Date.now() - 864e5);
   const tbMin = Math.min(...day.map(r => r.tb).filter(x => x != null));
@@ -290,7 +317,7 @@ function render() {
     ? 'Dernier signe de vie il y a ' + ago(age) + (inv > 0 ? ' (onduleur ' + (inv >= 1.5 ? 'en mode camp' : 'allumé') + ' à ce moment)' : '')
     : 'Mis à jour aux 5 min · il y a ' + ago(age);
   remoteUi();
-  solUi();
+  solUi(); heatUi();
   drawAll();
   dayTable();
   $('foot').textContent = demo ? 'Données de démonstration' : 'Canal ThingSpeak ' + cfg.c + ' · ' + rows.length + ' points';
@@ -330,6 +357,26 @@ $('bCamp').onclick = () => send('CAMP', 'Mettre le camp en mode camp (onduleur a
 $('bCourt').onclick = () => send('COURT', 'Envoi de midi court : fermer l\'onduleur 10 min après l\'envoi');
 $('bLong').onclick = () => send('LONG', 'Envoi de midi long : garder l\'onduleur ouvert 60 min chaque jour');
 
+// ---------- Chauffe (3e canal) : indépendant du canal 2 ----------
+function heatUi() {
+  // Canal « camp chauffe » : qui chauffe et le bilan 24 h de la carte (plus précis que la règle du LOAD)
+    const H = heat3 && Date.now() - heat3.t < 3 * 3600e3 ? heat3 : null;
+    $('hWhoC').classList.toggle('hide', !H);
+    $('hDet').classList.toggle('hide', !H);
+    if (H) {
+      $('heatRow').classList.remove('hide');
+      const W = ['Personne', 'ESP', 'ESP (soleil)', 'Thermostat'];
+      $('hWho').textContent = W[H.who] || '--';
+      $('hWho').style.color = H.who === 3 ? css('--bad') : H.who ? css('--amber') : '';
+      $('hWhoT').textContent = 'Chauffe maintenant' + (H.tgt != null ? ' · vise ' + fmt(H.tgt, 0) + ' °C' : '');
+      if (H.esp != null) $('hTime').textContent = hm(H.esp + (H.bim || 0));
+      if (H.ah != null) $('hAh').textContent = fmt(H.ah, 0) + ' Ah';
+      $('hTimeT').textContent = 'Fil chauffant, 24 h';
+      $('hDet').textContent = '24 h : ESP ' + hm(H.esp || 0) + (H.sol >= 0.05 ? ' (dont ' + hm(H.sol) + ' au soleil, gratuites)' : '') +
+        ' · thermostat ' + hm(H.bim || 0) + (H.st ? ' · ' + H.st : '');
+    }
+}
+
 // ---------- Section Solaire (2e canal) ----------
 function solUi() {
   $('solSec').classList.toggle('hide', !rows2.length);
@@ -367,6 +414,7 @@ function solUi() {
       $('hTimeT').textContent = 'Fil chauffant, ' + (span >= 20 ? '24 h' : Math.max(1, Math.round(span)) + ' h');
     } else $('heatRow').classList.add('hide');
   }
+
   // SmartShunt (envoyé par le canal 2) : autonomie, dernier plein, Ah consommés
   const ttg = lt('ttg'), hf = lt('hf'), ce = lt('ce');
   $('battRow').classList.toggle('hide', ttg == null && hf == null && ce == null);
@@ -522,7 +570,7 @@ function start() {
 $('fSetup').onsubmit = e => {
   e.preventDefault();
   saveCfg({c: $('inC').value.trim(), k: $('inK').value.trim(), t: $('inT').value.trim(), tk: $('inTk').value.trim(),
-           c2: $('inC2').value.trim(), k2: $('inK2').value.trim()});
+           c2: $('inC2').value.trim(), k2: $('inK2').value.trim(), c3: $('inC3').value.trim(), k3: $('inK3').value.trim()});
 };
 $('demoBtn').onclick = () => location.hash = 'demo';
 $('changeBtn').onclick = () => { try { localStorage.removeItem('camp-cfg'); } catch (e) {} history.replaceState(null, '', location.pathname); start(); };
